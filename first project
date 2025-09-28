@@ -1,0 +1,209 @@
+import sqlite3
+import uuid
+import time
+import bcrypt
+
+
+DB_NAME = "secure_users.db"
+SESSION_LIFETIME = 3600  
+tnos = 1500000  
+
+special_chars = "!@#$%^&*()-_=+[];:',.<>?/\\|"
+
+
+def check_password_strength(password: str) -> str:
+    has_letter = any(char.isalpha() for char in password)
+    has_digit = any(char.isdigit() for char in password)
+    has_special = any(char in special_chars for char in password)
+
+    if len(password) < 8:
+        return "Too Short"
+    elif has_letter and has_digit and has_special:
+        return "Strong"
+    elif has_letter and has_digit:
+        return "Moderate"
+    elif has_letter:
+        return "Weak"
+    else:
+        return "Invalid"
+
+
+def create_tables():
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash BLOB NOT NULL
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON session(token)")
+        conn.commit()
+
+
+def register_user(username: str, password: str) -> str:
+    strength = check_password_strength(password)
+    if strength in ["Too Short", "Invalid"]:
+        return f"❌ Password strength: {strength}. Try again."
+
+    hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_pw))
+            conn.commit()
+        return f"✅ User '{username}' registered successfully with {strength} password."
+    except sqlite3.IntegrityError:
+        return f"❌ Username '{username}' already exists."
+
+
+def login(username: str, password: str):
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+
+        if result:
+            user_id, stored_hash = result
+            if bcrypt.checkpw(password.encode(), stored_hash):
+                token = str(uuid.uuid4())
+                now = int(time.time())
+                cursor.execute("INSERT INTO session (user_id, token, created_at) VALUES (?, ?, ?)",
+                               (user_id, token, now))
+                conn.commit()
+                return True, f"✅ Login successful! Welcome, {username}.", token
+    return False, "❌ Invalid username or password.", None
+
+
+def logout(token: str) -> str:
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM session WHERE token = ?", (token,))
+        conn.commit()
+    return "✅ Logged out successfully."
+
+
+def get_logged_in_user(token: str):
+    now = int(time.time())
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT u.username, s.created_at FROM users u
+            JOIN session s ON u.id = s.user_id
+            WHERE s.token = ?
+        """, (token,))
+        result = cursor.fetchone()
+
+        if result:
+            username, created_at = result
+            if now - created_at <= SESSION_LIFETIME:
+                return username
+            else:
+                cursor.execute("DELETE FROM session WHERE token = ?", (token,))
+                conn.commit()
+    return None
+
+
+def predict_rank():
+    print("\n📊 JEE Rank Predictor")
+
+    try:
+        a = int(input("How many attempts you gave for JEE? (0-3): "))
+        if not (0 <= a <= 3):
+            print("❌ Invalid attempt count! Must be between 0 and 3.")
+            return
+
+        p = float(input("Please enter your percentile (0-100): "))
+        if not (0 <= p <= 100):
+            print("❌ Invalid percentile! Must be between 0 and 100.")
+            return
+
+        c = input("Please enter your caste (Gen/Sc/Pwd): ").strip().lower()
+        g = input("Please enter your gender (Male/Female): ").strip().lower()
+
+       
+        if c == "gen":
+            c = 1
+        elif c == "sc" or c == "pwd":
+            c = 2
+        else:
+            print("⚠️ Invalid caste entered, defaulting to 'gen'")
+            c = 1
+
+       
+        if g == "male":
+            g = 1
+        elif g == "female":
+            g = 2
+        else:
+            print("⚠️ Invalid gender entered, defaulting to 'male'")
+            g = 1
+
+      
+        rank_formula = a + g + c
+        L = p * tnos
+        M = L / 100
+        rank = tnos - p * rank_formula - M + 10000
+
+        print(f"\n🎯 Estimated Rank: {int(rank):,}")
+    except ValueError:
+        print("❌ Invalid input. Please enter numbers where required.")
+
+
+def main():
+    create_tables()
+    current_token = None
+
+    while True:
+        if current_token:
+            user = get_logged_in_user(current_token)
+            if user:
+                print(f"\n👤 Logged in as: {user}")
+                print("1. Predict JEE Rank\n2. Logout\n3. Exit")
+                choice = input("Choose: ").strip()
+
+                if choice == "1":
+                    predict_rank()
+                elif choice == "2":
+                    print(logout(current_token))
+                    current_token = None
+                elif choice == "3":
+                    break
+                else:
+                    print("❌ Invalid choice.")
+            else:
+                print("⚠️ Session expired or invalid. Please log in again.")
+                current_token = None
+        else:
+            print("\n1. Register\n2. Login\n3. Exit")
+            choice = input("Choose: ").strip()
+
+            if choice == "1":
+                u = input("Enter username: ")
+                p = input("Enter password: ")
+                print(register_user(u, p))
+            elif choice == "2":
+                u = input("Username: ")
+                p = input("Password: ")
+                success, msg, token = login(u, p)
+                print(msg)
+                if success:
+                    current_token = token
+            elif choice == "3":
+                break
+            else:
+                print("❌ Invalid choice.")
+
+if __name__ == "__main__":
+    main()

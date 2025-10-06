@@ -1,15 +1,15 @@
 import sqlite3
+import bcrypt
 import uuid
 import time
-import bcrypt
+import turtle
 
+# --------------------- DATABASE AUTH SYSTEM ---------------------
 
 DB_NAME = "secure_users.db"
-SESSION_LIFETIME = 3600  
-tnos = 1500000  
+SESSION_LIFETIME = 3600  # 1 hour
 
-special_chars = "!@#$%^&*()-_=+[];:',.<>?/\\|"
-
+special_chars = "!@#$%^&*()-_=+[]{};:',.<>?/\\|"
 
 def check_password_strength(password: str) -> str:
     has_letter = any(char.isalpha() for char in password)
@@ -26,7 +26,6 @@ def check_password_strength(password: str) -> str:
         return "Weak"
     else:
         return "Invalid"
-
 
 def create_tables():
     with sqlite3.connect(DB_NAME) as conn:
@@ -47,10 +46,7 @@ def create_tables():
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
         """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_token ON session(token)")
         conn.commit()
-
 
 def register_user(username: str, password: str) -> str:
     strength = check_password_strength(password)
@@ -58,17 +54,17 @@ def register_user(username: str, password: str) -> str:
         return f"❌ Password strength: {strength}. Try again."
 
     hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_pw))
             conn.commit()
-        return f"✅ User '{username}' registered successfully with {strength} password."
+        return f"✅ User '{username}' registered successfully ({strength} password)."
     except sqlite3.IntegrityError:
         return f"❌ Username '{username}' already exists."
 
-
-def login(username: str, password: str):
+def login_user(username: str, password: str):
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (username,))
@@ -79,20 +75,17 @@ def login(username: str, password: str):
             if bcrypt.checkpw(password.encode(), stored_hash):
                 token = str(uuid.uuid4())
                 now = int(time.time())
-                cursor.execute("INSERT INTO session (user_id, token, created_at) VALUES (?, ?, ?)",
-                               (user_id, token, now))
+                cursor.execute("INSERT INTO session (user_id, token, created_at) VALUES (?, ?, ?)", (user_id, token, now))
                 conn.commit()
                 return True, f"✅ Login successful! Welcome, {username}.", token
     return False, "❌ Invalid username or password.", None
 
-
-def logout(token: str) -> str:
+def logout_user(token: str) -> str:
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM session WHERE token = ?", (token,))
         conn.commit()
     return "✅ Logged out successfully."
-
 
 def get_logged_in_user(token: str):
     now = int(time.time())
@@ -114,54 +107,110 @@ def get_logged_in_user(token: str):
                 conn.commit()
     return None
 
+# --------------------- HEART DRAWING ---------------------
+def draw_heart():
+    screen = turtle.Screen()
+    screen.bgcolor("white")
 
-def predict_rank():
-    print("\n📊 JEE Rank Predictor")
+    pen = turtle.Turtle()
+    pen.color("red")
+    pen.pensize(3)
+    pen.speed(1)
 
+    pen.begin_fill()
+    pen.left(140)
+    pen.forward(180)
+    pen.circle(-90, 200)
+    pen.left(120)
+    pen.circle(-90, 200)
+    pen.forward(180)
+    pen.end_fill()
+
+    pen.hideturtle()
+    turtle.done()
+
+# --------------------- CHAT MODERATION ---------------------
+
+moderation_data = {
+    "forbidden_words": {
+        "bad","ugly","stupid","idiot","hate","nerd","kill","fuck","dumb","bitch","gay",
+        "moron","loser","fool","trash","noob","weak","jerk","retard","psycho","crazy",
+        "bastard","slut","whore","asshole","cunt","dick","cock","pussy","faggot","tranny",
+        "cringe","simp","beta","coward","fatass","pig","clown","degenerate","worthless","pathetic"
+    },
+    "harmful_phrases": {
+        "kill you","kill him","kill her","kill them",
+        "commit suicide","i want to die","i will die",
+        "rape her","rape him",
+        "shoot you","stab you","hang myself","blow him up","plant bomb"
+    }
+}
+
+forbidden_words = moderation_data["forbidden_words"]
+harmful_phrases = moderation_data["harmful_phrases"]
+
+def censor_message(message: str) -> str:
+    return " ".join(["*"*len(w) if w.lower() in forbidden_words else w for w in message.split()])
+
+def ai_moderator(message: str) -> str:
+    msg = message.lower()
+    for phrase in harmful_phrases:
+        if phrase in msg:
+            return "🚨 GPT: Harmful / Dangerous Context"
+    if any(word in msg for word in forbidden_words):
+        return "⚠️ GPT: Offensive / Toxic Language"
+    return "✅ GPT: Safe"
+
+def chat_system():
+    chat_history = []
+    print("\n💬 Chat Moderation (AI + Censorship). Type 'back' to return.\n")
+
+    while True:
+        msg = input("Enter message: ")
+        if msg.lower() == "back":
+            break
+
+        censored = censor_message(msg)
+        ai_check = ai_moderator(msg)
+
+        if "GPT: Harmful" in ai_check or "GPT: Offensive" in ai_check:
+            display_msg = censored
+        else:
+            display_msg = msg
+
+        chat_history.append(f"{display_msg} [{ai_check}]")
+
+        print("\n--- Chat History ---")
+        for line in chat_history:
+            print(line)
+        print("--------------------\n")
+
+# --------------------- JEE RANK PREDICTOR ---------------------
+
+tnos = 1500000
+def jee_rank_predictor():
     try:
-        a = int(input("How many attempts you gave for JEE? (0-3): "))
-        if not (0 <= a <= 3):
-            print("❌ Invalid attempt count! Must be between 0 and 3.")
-            return
+        a = int(input("Attempts (0-3): "))
+        if not (0 <= a <= 3): return print("❌ Invalid attempts.")
+        p = float(input("Percentile (0-100): "))
+        if not (0 <= p <= 100): return print("❌ Invalid percentile.")
+        c = input("Caste (Gen/Sc/Pwd): ").strip().lower()
+        g = input("Gender (Male/Female): ").strip().lower()
+        c = 1 if c == "gen" else 2
+        g = 1 if g == "male" else 2
 
-        p = float(input("Please enter your percentile (0-100): "))
-        if not (0 <= p <= 100):
-            print("❌ Invalid percentile! Must be between 0 and 100.")
-            return
-
-        c = input("Please enter your caste (Gen/Sc/Pwd): ").strip().lower()
-        g = input("Please enter your gender (Male/Female): ").strip().lower()
-
-       
-        if c == "gen":
-            c = 1
-        elif c == "sc" or c == "pwd":
-            c = 2
-        else:
-            print("⚠️ Invalid caste entered, defaulting to 'gen'")
-            c = 1
-
-       
-        if g == "male":
-            g = 1
-        elif g == "female":
-            g = 2
-        else:
-            print("⚠️ Invalid gender entered, defaulting to 'male'")
-            g = 1
-
-      
         rank_formula = a + g + c
-        L = p * tnos
+        L = p * tnos 
         M = L / 100
         rank = tnos - p * rank_formula - M + 10000
 
-        print(f"\n🎯 Estimated Rank: {int(rank):,}")
+        print(f"🎯 Estimated Rank: {int(rank):,}")
     except ValueError:
-        print("❌ Invalid input. Please enter numbers where required.")
+        print("❌ Invalid input.")
 
+# --------------------- MAIN MENU ---------------------
 
-def main():
+def main_menu():
     create_tables()
     current_token = None
 
@@ -169,25 +218,37 @@ def main():
         if current_token:
             user = get_logged_in_user(current_token)
             if user:
-                print(f"\n👤 Logged in as: {user}")
-                print("1. Predict JEE Rank\n2. Logout\n3. Exit")
-                choice = input("Choose: ").strip()
+                print(f"\n==== MAIN MENU ({user}) ====")
+                print("1. Chat System")
+                print("2. JEE Rank Predictor")
+                print("3. Draw Heart 💖")
+                print("4. Logout")
+                print("5. Exit")
+                choice = input("Choose: ")
 
                 if choice == "1":
-                    predict_rank()
+                    chat_system()
                 elif choice == "2":
-                    print(logout(current_token))
-                    current_token = None
+                    jee_rank_predictor()
                 elif choice == "3":
+                    draw_heart()
+                elif choice == "4":
+                    print(logout_user(current_token))
+                    current_token = None
+                elif choice == "5":
+                    print("👋 Exiting program...")
                     break
                 else:
                     print("❌ Invalid choice.")
             else:
-                print("⚠️ Session expired or invalid. Please log in again.")
+                print("⚠️ Session expired. Please log in again.")
                 current_token = None
         else:
-            print("\n1. Register\n2. Login\n3. Exit")
-            choice = input("Choose: ").strip()
+            print("\n==== LOGIN SYSTEM ====")
+            print("1. Register")
+            print("2. Login")
+            print("3. Exit")
+            choice = input("Choose: ")
 
             if choice == "1":
                 u = input("Enter username: ")
@@ -196,14 +257,15 @@ def main():
             elif choice == "2":
                 u = input("Username: ")
                 p = input("Password: ")
-                success, msg, token = login(u, p)
+                success, msg, token = login_user(u, p)
                 print(msg)
                 if success:
                     current_token = token
             elif choice == "3":
+                print("👋 Goodbye!")
                 break
             else:
                 print("❌ Invalid choice.")
 
 if __name__ == "__main__":
-    main()
+    main_menu()
